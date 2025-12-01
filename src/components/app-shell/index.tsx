@@ -1,5 +1,6 @@
 'use client'
 
+import { usePathname } from 'next/navigation'
 import { Header } from './header'
 import { TabBar } from './tab-bar'
 import { FAB } from './fab'
@@ -11,12 +12,18 @@ interface AppShellProps {
   showFAB?: boolean
 }
 
+// FABを非表示にするパス
+const hideFABPaths = ['/walks/record']
+
 export function AppShell({
   children,
   showHeader = true,
   showTabBar = true,
   showFAB = true,
 }: AppShellProps) {
+  const pathname = usePathname()
+  const shouldShowFAB = showFAB && !hideFABPaths.includes(pathname)
+
   return (
     <div className="min-h-screen bg-background">
       {showHeader && <Header />}
@@ -28,7 +35,7 @@ export function AppShell({
       >
         {children}
       </main>
-      {showFAB && <FAB />}
+      {shouldShowFAB && <FAB />}
       {showTabBar && <TabBar />}
     </div>
   )

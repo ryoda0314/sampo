@@ -2,6 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/providers/auth-provider'
 import { Button } from '@/components/ui/button'
@@ -23,6 +24,7 @@ import {
 import type { PostWithUser, WalkRecord } from '@/types/database'
 
 export default function MyPage() {
+  const router = useRouter()
   const { user, profile, signOut } = useAuth()
   const supabase = createClient()
 
@@ -75,32 +77,34 @@ export default function MyPage() {
 
       const { data: postsData, error } = await supabase
         .from('posts')
-        .select('*')
+        .select('*, user:users(*)')
         .eq('user_id', user.id)
         .eq('is_deleted', false)
         .order('created_at', { ascending: false })
         .limit(20)
 
       if (error) throw error
+      if (!postsData || postsData.length === 0) return []
 
-      const postsWithUser = await Promise.all(
-        (postsData || []).map(async (post) => {
-          const { data: userData } = await supabase
-            .from('users')
-            .select('*')
-            .eq('id', post.user_id)
-            .maybeSingle()
+      const postIds = postsData.map((p) => p.id)
 
-          return {
-            ...post,
-            user: userData,
-            likes_count: 0,
-            is_liked: false,
-          } as PostWithUser
-        })
-      )
+      // いいね数を一括取得
+      const { data: likeCounts } = await supabase
+        .from('post_likes')
+        .select('post_id')
+        .in('post_id', postIds)
 
-      return postsWithUser
+      const likeCountMap = new Map<string, number>()
+      likeCounts?.forEach((like) => {
+        likeCountMap.set(like.post_id, (likeCountMap.get(like.post_id) || 0) + 1)
+      })
+
+      return postsData.map((post) => ({
+        ...post,
+        user: post.user,
+        likes_count: likeCountMap.get(post.id) || 0,
+        is_liked: false,
+      })) as PostWithUser[]
     },
     enabled: !!user,
   })
@@ -126,7 +130,8 @@ export default function MyPage() {
 
   const handleSignOut = async () => {
     await signOut()
-    window.location.href = '/login'
+    router.refresh()
+    router.push('/login')
   }
 
   return (
@@ -247,33 +252,38 @@ export default function MyPage() {
           ) : walkRecords && walkRecords.length > 0 ? (
             <div className="space-y-3">
               {walkRecords.map((walk) => (
-                <Card key={walk.id}>
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 bg-primary/10 rounded-full">
-                          <Footprints className="h-5 w-5 text-primary" />
+                <Link key={walk.id} href={`/walks/${walk.id}`}>
+                  <Card className="cursor-pointer hover:bg-muted/50 transition-colors">
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 bg-primary/10 rounded-full">
+                            <Footprints className="h-5 w-5 text-primary" />
+                          </div>
+                          <div>
+                            <div className="font-medium">
+                              {formatDistance(walk.total_distance_m)}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {new Date(walk.started_at).toLocaleDateString('ja-JP', {
+                                month: 'long',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </div>
+                          </div>
                         </div>
-                        <div>
-                          <div className="font-medium">
-                            {formatDistance(walk.total_distance_m)}
+                        <div className="flex items-center gap-2">
+                          <div className="text-sm text-muted-foreground">
+                            {Math.floor(walk.total_time_sec / 60)}分
                           </div>
-                          <div className="text-xs text-muted-foreground">
-                            {new Date(walk.started_at).toLocaleDateString('ja-JP', {
-                              month: 'long',
-                              day: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
-                          </div>
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
                         </div>
                       </div>
-                      <div className="text-sm text-muted-foreground">
-                        {Math.floor(walk.total_time_sec / 60)}分
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+                    </CardContent>
+                  </Card>
+                </Link>
               ))}
             </div>
           ) : (

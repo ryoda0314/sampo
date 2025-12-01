@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/providers/auth-provider'
@@ -14,6 +15,7 @@ const POSTS_PER_PAGE = 10
 export default function HomePage() {
   const { user } = useAuth()
   const supabase = createClient()
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
   const {
     data,
@@ -26,54 +28,48 @@ export default function HomePage() {
   } = useInfiniteQuery({
     queryKey: ['timeline', user?.id],
     queryFn: async ({ pageParam = 0 }) => {
-      // 投稿を取得
+      // 投稿とユーザー情報を一度に取得
       const { data: posts, error } = await supabase
         .from('posts')
-        .select('*')
+        .select('*, user:users(*)')
         .eq('is_deleted', false)
         .order('created_at', { ascending: false })
         .range(pageParam * POSTS_PER_PAGE, (pageParam + 1) * POSTS_PER_PAGE - 1)
 
       if (error) throw error
+      if (!posts || posts.length === 0) return []
 
-      // ユーザー情報といいね数を取得
-      const postsWithDetails = await Promise.all(
-        (posts || []).map(async (post) => {
-          // ユーザー情報を取得
-          const { data: userData } = await supabase
-            .from('users')
-            .select('*')
-            .eq('id', post.user_id)
-            .single()
+      const postIds = posts.map((p) => p.id)
 
-          // いいね数を取得
-          const { count } = await supabase
-            .from('post_likes')
-            .select('*', { count: 'exact', head: true })
-            .eq('post_id', post.id)
+      // いいね数を一括取得
+      const { data: likeCounts } = await supabase
+        .from('post_likes')
+        .select('post_id')
+        .in('post_id', postIds)
 
-          // 自分がいいねしているか確認
-          let isLiked = false
-          if (user) {
-            const { data: like } = await supabase
-              .from('post_likes')
-              .select('id')
-              .eq('post_id', post.id)
-              .eq('user_id', user.id)
-              .maybeSingle()
-            isLiked = !!like
-          }
+      const likeCountMap = new Map<string, number>()
+      likeCounts?.forEach((like) => {
+        likeCountMap.set(like.post_id, (likeCountMap.get(like.post_id) || 0) + 1)
+      })
 
-          return {
-            ...post,
-            user: userData,
-            likes_count: count || 0,
-            is_liked: isLiked,
-          } as PostWithUser
-        })
-      )
+      // 自分がいいねした投稿を一括取得
+      let userLikedPosts = new Set<string>()
+      if (user) {
+        const { data: userLikes } = await supabase
+          .from('post_likes')
+          .select('post_id')
+          .eq('user_id', user.id)
+          .in('post_id', postIds)
 
-      return postsWithDetails
+        userLikes?.forEach((like) => userLikedPosts.add(like.post_id))
+      }
+
+      return posts.map((post) => ({
+        ...post,
+        user: post.user,
+        likes_count: likeCountMap.get(post.id) || 0,
+        is_liked: userLikedPosts.has(post.id),
+      })) as PostWithUser[]
     },
     getNextPageParam: (lastPage, pages) => {
       if (lastPage.length < POSTS_PER_PAGE) return undefined
@@ -122,8 +118,27 @@ export default function HomePage() {
     )
   }
 
+  const handleRefresh = async () => {
+    setIsRefreshing(true)
+    await refetch()
+    setIsRefreshing(false)
+  }
+
   return (
     <div className="max-w-lg mx-auto px-4 py-4">
+      {/* 更新ボタン */}
+      <div className="flex justify-center mb-4">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+        >
+          <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+          {isRefreshing ? '更新中...' : 'タイムラインを更新'}
+        </Button>
+      </div>
+
       <div className="space-y-4">
         {allPosts.map((post) => (
           <PostCard key={post.id} post={post} onLikeChange={() => refetch()} />

@@ -43,15 +43,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   useEffect(() => {
-    const getUser = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
-      setUser(user)
-      if (user) {
-        await fetchProfile(user.id)
+    let isMounted = true
+
+    // タイムアウト: 5秒後に強制的にローディング終了
+    const timeout = setTimeout(() => {
+      if (isMounted && isLoading) {
+        console.warn('Auth timeout - forcing loading to complete')
+        setIsLoading(false)
       }
-      setIsLoading(false)
+    }, 5000)
+
+    const getUser = async () => {
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser()
+        if (isMounted) {
+          setUser(user)
+          if (user) {
+            await fetchProfile(user.id)
+          }
+        }
+      } catch (error) {
+        console.error('Auth error:', error)
+        if (isMounted) {
+          setUser(null)
+          setProfile(null)
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false)
+        }
+      }
     }
 
     getUser()
@@ -59,22 +82,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
-      setUser(session?.user ?? null)
-      if (session?.user) {
-        await fetchProfile(session.user.id)
-      } else {
-        setProfile(null)
+      try {
+        if (isMounted) {
+          setUser(session?.user ?? null)
+          if (session?.user) {
+            await fetchProfile(session.user.id)
+          } else {
+            setProfile(null)
+          }
+        }
+      } catch (error) {
+        console.error('Auth state change error:', error)
+      } finally {
+        if (isMounted) {
+          setIsLoading(false)
+        }
       }
-      setIsLoading(false)
     })
 
-    return () => subscription.unsubscribe()
+    return () => {
+      isMounted = false
+      clearTimeout(timeout)
+      subscription.unsubscribe()
+    }
   }, [])
 
   const signOut = async () => {
-    await supabase.auth.signOut()
-    setUser(null)
-    setProfile(null)
+    try {
+      await supabase.auth.signOut({ scope: 'global' })
+    } catch (error) {
+      console.error('Sign out error:', error)
+    } finally {
+      setUser(null)
+      setProfile(null)
+    }
   }
 
   return (

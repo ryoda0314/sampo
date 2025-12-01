@@ -45,6 +45,7 @@ export async function updateSession(request: NextRequest) {
     '/events',
     '/notifications',
     '/admin',
+    '/users',
   ]
 
   const isProtectedRoute = protectedRoutes.some(
